@@ -83,10 +83,15 @@ def run_all_tests(executable: Path) -> Tuple[bool, str]:
         return False, f"Error running tests: {str(e)}"
 
 
-def progressive_test(project_dir: Path, executable: Path) -> bool:
+def progressive_test(project_dir: Path, executable: Path, task_filter: Optional[List[str]] = None) -> bool:
     """
     Run tests progressively - start with task_1, then add more tasks until failure
     Returns True if all tests pass, False otherwise
+    
+    Args:
+        project_dir: Project directory path
+        executable: Path to test executable
+        task_filter: Optional list of specific tasks to run (e.g., ['task_1', 'task_2'])
     """
     # Find test file
     test_files = list(project_dir.glob("*_test.cpp"))
@@ -96,6 +101,17 @@ def progressive_test(project_dir: Path, executable: Path) -> bool:
     
     test_file = test_files[0]
     tags = extract_test_tags(test_file)
+    
+    # Apply task filter if specified
+    if task_filter:
+        original_tags = tags[:]
+        tags = [tag for tag in tags if tag in task_filter]
+        if not tags:
+            print(f"{Colors.RED}Error: None of the specified tasks found in test file{Colors.NC}")
+            print(f"{Colors.YELLOW}Available tasks: {', '.join(original_tags)}{Colors.NC}")
+            print(f"{Colors.YELLOW}Requested tasks: {', '.join(task_filter)}{Colors.NC}")
+            return False
+        print(f"{Colors.BLUE}Running only specified tasks: {', '.join(tags)}{Colors.NC}\n")
     
     if not tags:
         # No tags found, just run all tests normally
@@ -143,7 +159,16 @@ def progressive_test(project_dir: Path, executable: Path) -> bool:
         
         print()
     
-    # All tasks passed, run complete test suite to be sure
+    # All tasks passed, run complete test suite to be sure (unless filtering specific tasks)
+    if task_filter:
+        # User requested specific tasks only, don't run complete suite
+        print()
+        print(f"{Colors.GREEN}{'='*50}{Colors.NC}")
+        print(f"{Colors.GREEN}✓ Specified tasks passed!{Colors.NC}")
+        print(f"{Colors.GREEN}  Completed tasks: {', '.join(passed_tasks)}{Colors.NC}")
+        print(f"{Colors.GREEN}{'='*50}{Colors.NC}")
+        return True
+    
     print(f"{Colors.BLUE}{'='*50}{Colors.NC}")
     print(f"{Colors.BLUE}Running complete test suite...{Colors.NC}")
     print(f"{Colors.BLUE}{'='*50}{Colors.NC}")
@@ -168,12 +193,17 @@ def progressive_test(project_dir: Path, executable: Path) -> bool:
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: test.py <project_directory> <executable_path>")
-        sys.exit(1)
+    import argparse
     
-    project_dir = Path(sys.argv[1]).resolve()
-    executable = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description='Run progressive tests')
+    parser.add_argument('project_dir', help='Project directory path')
+    parser.add_argument('executable', help='Test executable path')
+    parser.add_argument('--task', type=str, help='Run only specific task(s) (comma-separated)')
+    
+    args = parser.parse_args()
+    
+    project_dir = Path(args.project_dir).resolve()
+    executable = Path(args.executable)
     
     if not executable.is_absolute():
         executable = project_dir / "build" / executable
@@ -182,7 +212,12 @@ def main():
         print(f"{Colors.RED}Error: Executable not found: {executable}{Colors.NC}")
         sys.exit(1)
     
-    success = progressive_test(project_dir, executable)
+    # Parse task filter if provided
+    task_filter = None
+    if args.task:
+        task_filter = [t.strip() for t in args.task.split(',')]
+    
+    success = progressive_test(project_dir, executable, task_filter)
     sys.exit(0 if success else 1)
 
 

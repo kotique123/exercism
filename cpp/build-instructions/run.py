@@ -59,7 +59,7 @@ def resolve_project_path(project_input: str, script_dir: Path) -> Path:
     return project_path.resolve()
 
 
-def run_module(module_script: Path, args: list, step_name: str, interactive: bool = False) -> tuple[bool, str]:
+def run_module(module_script: Path, args: list, step_name: str, interactive: bool = False, env_vars: dict = None) -> tuple[bool, str]:
     """Run a module script and return success status and output
     
     Args:
@@ -67,13 +67,22 @@ def run_module(module_script: Path, args: list, step_name: str, interactive: boo
         args: Arguments to pass to the script
         step_name: Name for error messages
         interactive: If True, don't capture output (for user interaction)
+        env_vars: Optional environment variables to pass to the subprocess
     """
     try:
+        # Prepare environment
+        env = None
+        if env_vars:
+            import os
+            env = os.environ.copy()
+            env.update(env_vars)
+        
         if interactive:
             # Don't capture output - let module interact with terminal
             result = subprocess.run(
                 [str(module_script)] + args,
-                timeout=120
+                timeout=120,
+                env=env
             )
             return result.returncode == 0, ""
         else:
@@ -82,7 +91,8 @@ def run_module(module_script: Path, args: list, step_name: str, interactive: boo
                 [str(module_script)] + args,
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=120,
+                env=env
             )
             
             output = result.stdout.strip()
@@ -106,8 +116,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s lasagna              Build and test
+  %(prog)s lasagna              Build and test all tasks progressively
   %(prog)s lasagna --submit     Build, test, and auto-submit
+  %(prog)s lasagna -t task_1    Build and test only task_1
+  %(prog)s lasagna --task task_1,task_2  Test only task_1 and task_2
+  %(prog)s lasagna --relaxed    Build without unused parameter warnings
   %(prog)s cpp/lasagna -s       Same with full path
         """
     )
@@ -115,6 +128,10 @@ Examples:
     parser.add_argument('project', help='Project directory (e.g., "lasagna" or "cpp/lasagna")')
     parser.add_argument('-s', '--submit', action='store_true', 
                        help='Auto-submit to Exercism if tests pass')
+    parser.add_argument('-t', '--task', type=str, 
+                       help='Run only specific task(s) (e.g., "task_1" or "task_1,task_2")')
+    parser.add_argument('-r', '--relaxed', action='store_true',
+                       help='Disable unused parameter warnings during build')
     
     args = parser.parse_args()
     
@@ -140,7 +157,12 @@ Examples:
     print(f"{Colors.YELLOW}[1/3] Building project...{Colors.NC}")
     build_script = modules_dir / "build.sh"
     
-    success, output = run_module(build_script, [str(project_dir)], "Build")
+    # Prepare build environment variables
+    build_env = {}
+    if args.relaxed:
+        build_env['EXTRA_CXX_FLAGS'] = '-Wno-unused-parameter'
+    
+    success, output = run_module(build_script, [str(project_dir)], "Build", env_vars=build_env if build_env else None)
     
     if not success:
         print(f"{Colors.RED}✗ Build failed{Colors.NC}")
@@ -155,7 +177,11 @@ Examples:
     print(f"\n{Colors.YELLOW}[2/3] Running progressive tests...{Colors.NC}\n")
     test_script = modules_dir / "test.py"
     
-    success, output = run_module(test_script, [str(project_dir), executable_path], "Test")
+    test_args = [str(project_dir), executable_path]
+    if args.task:
+        test_args.extend(['--task', args.task])
+    
+    success, output = run_module(test_script, test_args, "Test")
     print(output)
     
     if not success:
